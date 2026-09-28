@@ -3,29 +3,28 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Kuis Interaktif Gestur Rentang Tangan</title>
+  <title>Kuis Interaktif Gestur Kepala (Benar / Salah)</title>
 
-  <!-- Library MediaPipe Camera & Pose -->
+  <!-- Pustaka MediaPipe Camera & Face Mesh -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 
   <style>
     * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     body { margin: 0; background: #f0f2f5; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
     header { background: #1e293b; color: white; width: 100%; text-align: center; padding: 15px 0; margin-bottom: 20px; }
-    .container { display: flex; gap: 20px; max-width: 1000px; width: 92%; flex-wrap: wrap; justify-content: center; }
+    .container { display: flex; gap: 20px; max-width: 900px; width: 90%; flex-wrap: wrap; justify-content: center; }
     
-    .card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); flex: 1; min-width: 320px; }
+    .card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); flex: 1; min-width: 300px; }
     
     /* Kamera & Canvas */
     .video-wrapper { position: relative; width: 100%; aspect-ratio: 4/3; background: #000; border-radius: 8px; overflow: hidden; }
     video, canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
     
-    /* Indikator & Status */
-    .gesture-badge { font-size: 1.1rem; font-weight: bold; padding: 12px; text-align: center; border-radius: 8px; margin-top: 15px; background: #e2e8f0; color: #475569; }
+    /* Indikator Status */
+    .gesture-badge { font-size: 1.2rem; font-weight: bold; padding: 12px; text-align: center; border-radius: 8px; margin-top: 15px; background: #e2e8f0; color: #475569; }
     .gesture-true { background: #dcfce7; color: #15803d; }
     .gesture-false { background: #fee2e2; color: #b91c1c; }
-    .gesture-next { background: #dbeafe; color: #1d4ed8; }
     
     /* Progress Bar Hold */
     .progress-container { width: 100%; background: #e2e8f0; height: 10px; border-radius: 5px; margin-top: 8px; overflow: hidden; }
@@ -34,17 +33,19 @@
     /* Area Soal */
     .score-board { font-size: 1.1rem; font-weight: bold; color: #0284c7; }
     .question-text { font-size: 1.25rem; font-weight: 600; color: #334155; margin: 20px 0; min-height: 70px; }
-    .feedback { font-size: 1.1rem; font-weight: bold; margin-top: 15px; }
+    .feedback { font-size: 1.1rem; font-weight: bold; margin-top: 10px; }
     .correct { color: #16a34a; }
     .incorrect { color: #dc2626; }
-    .instruction-hint { font-size: 0.9rem; color: #64748b; margin-top: 10px; background: #f8fafc; padding: 10px; border-radius: 6px; border-left: 4px solid #2563eb; }
+    
+    button { background: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-size: 1rem; cursor: pointer; margin-top: 15px; }
+    button:hover { background: #1d4ed8; }
   </style>
 </head>
 <body>
 
   <header>
-    <h2>Media Pembelajaran Interaktif: Rentang Tangan</h2>
-    <p style="margin: 5px 0 0 0; font-size: 0.9rem;">👉 Tangan Kanan = BENAR | 👈 Tangan Kiri = SALAH | 🙌 Kedua Tangan = SOAL BERIKUTNYA</p>
+    <h2>Media Pembelajaran Interaktif: Gestur Kepala</h2>
+    <p style="margin: 5px 0 0 0; font-size: 0.9rem;">↗️ Miring Kanan = BENAR | ↖️ Miring Kiri = SALAH</p>
   </header>
 
   <div class="container">
@@ -66,10 +67,7 @@
       <p id="question-number">Soal 1 dari 3</p>
       <div id="question" class="question-text">Memuat Soal...</div>
       <div id="feedback" class="feedback"></div>
-      
-      <div id="hint-box" class="instruction-hint">
-        <strong>Panduan:</strong> Pastikan seluruh bahu dan tangan Anda terlihat di layar kamera.
-      </div>
+      <button id="next-btn" onclick="nextQuestion()" style="display: none;">Soal Berikutnya</button>
     </div>
   </div>
 
@@ -82,43 +80,40 @@
 
     let currentIdx = 0;
     let score = 0;
-    let state = "ANSWERING"; // State: "ANSWERING", "WAITING_RESET", "WAITING_NEXT", "FINISHED"
-    let detectedGesture = null;
+    let isLocked = false;
+    let detectedAnswer = null;
     let holdStartTime = null;
-    const HOLD_DURATION = 1000; // Diturunkan menjadi 1.0 detik agar lebih reponsif
+    const HOLD_DURATION = 1200; // Tahan gestur selama 1.2 detik untuk konfirmasi
 
     const videoElement = document.getElementById('webcam');
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
     const gestureBadge = document.getElementById('gesture-detected');
     const progressBar = document.getElementById('hold-progress');
-    const hintBox = document.getElementById('hint-box');
 
     function loadQuestion() {
       if (currentIdx >= quizData.length) {
-        state = "FINISHED";
         document.getElementById('question').innerText = `Kuis Selesai! Skor Akhir: ${score}`;
         document.getElementById('question-number').innerText = "";
         document.getElementById('feedback').innerText = "";
-        hintBox.innerHTML = "<strong>Selesai!</strong> Selamat Anda telah menyelesaikan kuis.";
-        gestureBadge.className = 'gesture-badge';
-        gestureBadge.innerText = 'Kuis Selesai';
+        document.getElementById('next-btn').style.display = 'none';
+        isLocked = true;
         return;
       }
-      
-      state = "ANSWERING";
-      detectedGesture = null;
+      isLocked = false;
+      detectedAnswer = null;
       holdStartTime = null;
       progressBar.style.width = '0%';
       gestureBadge.className = 'gesture-badge';
-      gestureBadge.innerText = 'Posisikan Tangan Turun';
+      gestureBadge.innerText = 'Posisikan Kepala Tegak';
       document.getElementById('feedback').innerText = '';
+      document.getElementById('next-btn').style.display = 'none';
       document.getElementById('question-number').innerText = `Soal ${currentIdx + 1} dari ${quizData.length}`;
       document.getElementById('question').innerText = quizData[currentIdx].q;
-      hintBox.innerHTML = "<strong>Panduan:</strong> Rentangkan tangan kanan (BENAR) atau tangan kiri (SALAH).";
     }
 
     function checkAnswer(userAnswer) {
+      isLocked = true;
       const correct = quizData[currentIdx].answer;
       const feedbackEl = document.getElementById('feedback');
 
@@ -131,11 +126,7 @@
         feedbackEl.innerText = `Kurang Tepat! Jawaban: ${correct}`;
         feedbackEl.className = "feedback incorrect";
       }
-
-      state = "WAITING_RESET";
-      hintBox.innerHTML = "<strong>Lanjut Soal:</strong> Turunkan tangan terlebih dahulu, lalu <b>rentangkan KEDUA TANGAN</b>.";
-      gestureBadge.innerText = "Turunkan Tangan...";
-      gestureBadge.className = "gesture-badge";
+      document.getElementById('next-btn').style.display = 'inline-block';
     }
 
     function nextQuestion() {
@@ -143,126 +134,72 @@
       loadQuestion();
     }
 
-    // Menggambar titik panggul, bahu, dan tangan secara manual tanpa library external
-    function drawPoseLandmarks(ctx, landmarks) {
-      const pointsToDraw = [11, 12, 13, 14, 15, 16]; // Bahu, Siku, Pergelangan
-      ctx.fillStyle = '#0284c7';
+    // Deteksi Kemiringan Kepala berdasarkan landmark mata
+    function analyzeHeadTilt(landmarks) {
+      if (isLocked) return;
 
-      pointsToDraw.forEach(idx => {
-        const lm = landmarks[idx];
-        if (lm && lm.visibility > 0.5) {
-          ctx.beginPath();
-          ctx.arc(lm.x * canvasElement.width, lm.y * canvasElement.height, 8, 0, 2 * Math.PI);
-          ctx.fill();
-        }
-      });
-    }
+      // Point 33 = Sudut luar mata kiri (perspektif wajah)
+      // Point 263 = Sudut luar mata kanan (perspektif wajah)
+      const leftEye = landmarks[33];
+      const rightEye = landmarks[263];
 
-    // Algoritma Deteksi Rentangan Tangan
-    function analyzePose(landmarks) {
-      if (state === "FINISHED") return;
+      // Hitung selisih tinggi (Y) dan lebar (X) antara kedua mata
+      const dy = rightEye.y - leftEye.y;
+      const dx = rightEye.x - leftEye.x;
 
-      const leftShoulder = landmarks[11];  // Bahu Kiri
-      const rightShoulder = landmarks[12]; // Bahu Kanan
-      const leftWrist = landmarks[15];     // Pergelangan Kiri
-      const rightWrist = landmarks[16];    // Pergelangan Kanan
-
-      // Cek apakah visibilitas titik kunci memadai
-      if (leftShoulder.visibility < 0.5 || rightShoulder.visibility < 0.5) {
-        resetHold("Mundurlah Sedikit (Bahu Tidak Terlihat)");
-        return;
-      }
-
-      // Deteksi Tangan Kanan Pengguna (Di layar mirror berada di sebelah KANAN / X lebih besar)
-      // Tangan diangkat setara/mendekati bahu & direntangkan melebihi lebar bahu
-      const isRightExtended = (rightWrist.visibility > 0.5) &&
-                              (rightWrist.y < rightShoulder.y + 0.25) && 
-                              (rightWrist.x > rightShoulder.x + 0.12);
-
-      // Deteksi Tangan Kiri Pengguna (Di layar mirror berada di sebelah KIRI / X lebih kecil)
-      const isLeftExtended = (leftWrist.visibility > 0.5) &&
-                             (leftWrist.y < leftShoulder.y + 0.25) && 
-                             (leftWrist.x < leftShoulder.x - 0.12);
+      // Hitung sudut kemiringan dalam derajat
+      const angle = Math.atan2(dy, dx) * (180 / Math.PI);
 
       let currentGesture = null;
 
-      if (isRightExtended && isLeftExtended) {
-        currentGesture = "BOTH_EXTENDED";
-      } else if (isRightExtended) {
-        currentGesture = "RIGHT_EXTENDED"; // BENAR
-      } else if (isLeftExtended) {
-        currentGesture = "LEFT_EXTENDED";  // SALAH
+      // Batas ambang sudut (Tilted Threshold)
+      // Kamera di-mirror: Miring kanan pengguna membuat sudut bertambah positif (> 12°)
+      // Miring kiri pengguna membuat sudut berkurang negatif (< -12°)
+      if (angle > 12) {
+        currentGesture = "BENAR";
+      } else if (angle < -12) {
+        currentGesture = "SALAH";
       }
 
-      // Alur Logika State Machine
-      if (state === "WAITING_RESET") {
-        if (!isRightExtended && !isLeftExtended) {
-          state = "WAITING_NEXT";
-          gestureBadge.innerText = "Rentangkan Kedua Tangan Untuk Lanjut";
-          hintBox.innerHTML = "<strong>Siap!</strong> Sekarang rentangkan <b>KEDUA TANGAN</b> untuk ke soal berikutnya.";
-        }
-        return;
-      }
+      // Logika Penahanan Gestur (Hold to Confirm)
+      if (currentGesture) {
+        if (detectedAnswer === currentGesture) {
+          const elapsed = Date.now() - holdStartTime;
+          const progress = Math.min((elapsed / HOLD_DURATION) * 100, 100);
+          progressBar.style.width = `${progress}%`;
 
-      if (state === "ANSWERING") {
-        if (currentGesture === "RIGHT_EXTENDED" || currentGesture === "LEFT_EXTENDED") {
-          const mappedAnswer = (currentGesture === "RIGHT_EXTENDED") ? "BENAR" : "SALAH";
-          handleHold(mappedAnswer, () => checkAnswer(mappedAnswer), 
-            mappedAnswer === "BENAR" ? "👉 TANGAN KANAN (BENAR)" : "👈 TANGAN KIRI (SALAH)",
-            mappedAnswer === "BENAR" ? "gesture-badge gesture-true" : "gesture-badge gesture-false"
-          );
+          if (elapsed >= HOLD_DURATION) {
+            checkAnswer(currentGesture);
+          }
         } else {
-          resetHold("Rentangkan Tangan Kanan / Kiri");
+          detectedAnswer = currentGesture;
+          holdStartTime = Date.now();
         }
-      } 
-      else if (state === "WAITING_NEXT") {
-        if (currentGesture === "BOTH_EXTENDED") {
-          handleHold("NEXT", () => nextQuestion(), "🙌 KEDUA TANGAN (SOAL BERIKUTNYA)", "gesture-badge gesture-next");
-        } else {
-          resetHold("Rentangkan Kedua Tangan Untuk Lanjut");
-        }
-      }
-    }
 
-    function handleHold(gestureKey, onComplete, badgeText, badgeClass) {
-      if (detectedGesture === gestureKey) {
-        const elapsed = Date.now() - holdStartTime;
-        const progress = Math.min((elapsed / HOLD_DURATION) * 100, 100);
-        progressBar.style.width = `${progress}%`;
-
-        if (elapsed >= HOLD_DURATION) {
-          onComplete();
-        }
+        gestureBadge.innerText = currentGesture === "BENAR" ? "↗️ MIRING KANAN (BENAR)" : "↖️ MIRING KIRI (SALAH)";
+        gestureBadge.className = `gesture-badge ${currentGesture === "BENAR" ? "gesture-true" : "gesture-false"}`;
       } else {
-        detectedGesture = gestureKey;
-        holdStartTime = Date.now();
+        detectedAnswer = null;
+        holdStartTime = null;
+        progressBar.style.width = '0%';
+        gestureBadge.innerText = "Posisikan Kepala Tegak";
+        gestureBadge.className = "gesture-badge";
       }
-
-      gestureBadge.innerText = badgeText;
-      gestureBadge.className = badgeClass;
     }
 
-    function resetHold(defaultText) {
-      detectedGesture = null;
-      holdStartTime = null;
-      progressBar.style.width = '0%';
-      gestureBadge.innerText = defaultText;
-      gestureBadge.className = "gesture-badge";
-    }
-
-    // Inisialisasi Pose
-    const pose = new Pose({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+    // Inisialisasi Face Mesh
+    const faceMesh = new FaceMesh({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
 
-    pose.setOptions({
-      modelComplexity: 1,
-      smoothLandmarks: true,
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: false,
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5
     });
 
-    pose.onResults((results) => {
+    faceMesh.onResults((results) => {
       if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
         canvasElement.width = videoElement.videoWidth;
         canvasElement.height = videoElement.videoHeight;
@@ -270,17 +207,34 @@
 
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-      if (results.poseLandmarks) {
-        drawPoseLandmarks(canvasCtx, results.poseLandmarks);
-        analyzePose(results.poseLandmarks);
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0];
+
+        // Visualisasi sederhana titik mata di canvas
+        const leftEye = landmarks[33];
+        const rightEye = landmarks[263];
+
+        canvasCtx.fillStyle = '#00FF00';
+        canvasCtx.beginPath();
+        canvasCtx.arc(leftEye.x * canvasElement.width, leftEye.y * canvasElement.height, 5, 0, 2 * Math.PI);
+        canvasCtx.arc(rightEye.x * canvasElement.width, rightEye.y * canvasElement.height, 5, 0, 2 * Math.PI);
+        canvasCtx.fill();
+
+        analyzeHeadTilt(landmarks);
       } else {
-        resetHold("Tubuh Tidak Terdeteksi di Layar");
+        if (!isLocked) {
+          detectedAnswer = null;
+          holdStartTime = null;
+          progressBar.style.width = '0%';
+          gestureBadge.innerText = "Wajah Tidak Terdeteksi";
+          gestureBadge.className = "gesture-badge";
+        }
       }
     });
 
     const camera = new Camera(videoElement, {
       onFrame: async () => {
-        await pose.send({ image: videoElement });
+        await faceMesh.send({ image: videoElement });
       },
       width: 640,
       height: 480
