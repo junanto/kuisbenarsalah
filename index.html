@@ -5,9 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kuis Interaktif Gestur Rentang Tangan</title>
 
-  <!-- MediaPipe Camera & Pose Dependencies -->
+  <!-- Library MediaPipe Camera & Pose -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
 
   <style>
@@ -69,7 +68,7 @@
       <div id="feedback" class="feedback"></div>
       
       <div id="hint-box" class="instruction-hint">
-        <strong>Panduan:</strong> Rentangkan tangan kanan untuk memilih <b>BENAR</b> atau tangan kiri untuk <b>SALAH</b>.
+        <strong>Panduan:</strong> Pastikan seluruh bahu dan tangan Anda terlihat di layar kamera.
       </div>
     </div>
   </div>
@@ -83,10 +82,10 @@
 
     let currentIdx = 0;
     let score = 0;
-    let state = "ANSWERING"; // State: "ANSWERING", "WAITING_NEXT", "WAITING_RESET", "FINISHED"
+    let state = "ANSWERING"; // State: "ANSWERING", "WAITING_RESET", "WAITING_NEXT", "FINISHED"
     let detectedGesture = null;
     let holdStartTime = null;
-    const HOLD_DURATION = 1200; // Tahan gestur selama 1.2 detik untuk konfirmasi
+    const HOLD_DURATION = 1000; // Diturunkan menjadi 1.0 detik agar lebih reponsif
 
     const videoElement = document.getElementById('webcam');
     const canvasElement = document.getElementById('output_canvas');
@@ -101,7 +100,7 @@
         document.getElementById('question').innerText = `Kuis Selesai! Skor Akhir: ${score}`;
         document.getElementById('question-number').innerText = "";
         document.getElementById('feedback').innerText = "";
-        hintBox.innerHTML = "<strong>Selesai!</strong> Terima kasih telah menyelesaikan kuis.";
+        hintBox.innerHTML = "<strong>Selesai!</strong> Selamat Anda telah menyelesaikan kuis.";
         gestureBadge.className = 'gesture-badge';
         gestureBadge.innerText = 'Kuis Selesai';
         return;
@@ -133,7 +132,7 @@
         feedbackEl.className = "feedback incorrect";
       }
 
-      state = "WAITING_RESET"; // Memaksa pengguna menurunkan tangan sebelum memperbolehkan gestur "Next"
+      state = "WAITING_RESET";
       hintBox.innerHTML = "<strong>Lanjut Soal:</strong> Turunkan tangan terlebih dahulu, lalu <b>rentangkan KEDUA TANGAN</b>.";
       gestureBadge.innerText = "Turunkan Tangan...";
       gestureBadge.className = "gesture-badge";
@@ -144,29 +143,46 @@
       loadQuestion();
     }
 
+    // Menggambar titik panggul, bahu, dan tangan secara manual tanpa library external
+    function drawPoseLandmarks(ctx, landmarks) {
+      const pointsToDraw = [11, 12, 13, 14, 15, 16]; // Bahu, Siku, Pergelangan
+      ctx.fillStyle = '#0284c7';
+
+      pointsToDraw.forEach(idx => {
+        const lm = landmarks[idx];
+        if (lm && lm.visibility > 0.5) {
+          ctx.beginPath();
+          ctx.arc(lm.x * canvasElement.width, lm.y * canvasElement.height, 8, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      });
+    }
+
     // Algoritma Deteksi Rentangan Tangan
     function analyzePose(landmarks) {
       if (state === "FINISHED") return;
 
-      // Titik Landmark MediaPipe Pose:
-      // 11 = Bahu Kiri, 12 = Bahu Kanan
-      // 13 = Siku Kiri, 14 = Siku Kanan
-      // 15 = Pergelangan Kiri, 16 = Pergelangan Kanan
-      const leftShoulder = landmarks[11];
-      const rightShoulder = landmarks[12];
-      const leftElbow = landmarks[13];
-      const rightElbow = landmarks[14];
-      const leftWrist = landmarks[15];
-      const rightWrist = landmarks[16];
+      const leftShoulder = landmarks[11];  // Bahu Kiri
+      const rightShoulder = landmarks[12]; // Bahu Kanan
+      const leftWrist = landmarks[15];     // Pergelangan Kiri
+      const rightWrist = landmarks[16];    // Pergelangan Kanan
 
-      // Kerangka Kamera Di-mirror:
-      // Tangan Kanan pengguna berada di sisi KANAN layar kamera (X landmark lebih besar)
-      // Tangan Kiri pengguna berada di sisi KIRI layar kamera (X landmark lebih kecil)
+      // Cek apakah visibilitas titik kunci memadai
+      if (leftShoulder.visibility < 0.5 || rightShoulder.visibility < 0.5) {
+        resetHold("Mundurlah Sedikit (Bahu Tidak Terlihat)");
+        return;
+      }
 
-      // Kriteria Rentangan: Pergelangan tangan diangkat secara horizontal setara atau di atas bahu
-      // Serta direntangkan menjauhi badan (sumbu X)
-      const isRightExtended = (rightWrist.y < rightShoulder.y + 0.15) && (rightWrist.x > rightShoulder.x + 0.18);
-      const isLeftExtended = (leftWrist.y < leftShoulder.y + 0.15) && (leftWrist.x < leftShoulder.x - 0.18);
+      // Deteksi Tangan Kanan Pengguna (Di layar mirror berada di sebelah KANAN / X lebih besar)
+      // Tangan diangkat setara/mendekati bahu & direntangkan melebihi lebar bahu
+      const isRightExtended = (rightWrist.visibility > 0.5) &&
+                              (rightWrist.y < rightShoulder.y + 0.25) && 
+                              (rightWrist.x > rightShoulder.x + 0.12);
+
+      // Deteksi Tangan Kiri Pengguna (Di layar mirror berada di sebelah KIRI / X lebih kecil)
+      const isLeftExtended = (leftWrist.visibility > 0.5) &&
+                             (leftWrist.y < leftShoulder.y + 0.25) && 
+                             (leftWrist.x < leftShoulder.x - 0.12);
 
       let currentGesture = null;
 
@@ -180,7 +196,6 @@
 
       // Alur Logika State Machine
       if (state === "WAITING_RESET") {
-        // Pengguna harus menurunkan tangan terlebih dahulu
         if (!isRightExtended && !isLeftExtended) {
           state = "WAITING_NEXT";
           gestureBadge.innerText = "Rentangkan Kedua Tangan Untuk Lanjut";
@@ -197,7 +212,7 @@
             mappedAnswer === "BENAR" ? "gesture-badge gesture-true" : "gesture-badge gesture-false"
           );
         } else {
-          resetHold("Posisikan Tangan Turun / Pilih Jawaban");
+          resetHold("Rentangkan Tangan Kanan / Kiri");
         }
       } 
       else if (state === "WAITING_NEXT") {
@@ -235,7 +250,7 @@
       gestureBadge.className = "gesture-badge";
     }
 
-    // Inisialisasi MediaPipe Pose
+    // Inisialisasi Pose
     const pose = new Pose({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
     });
@@ -243,8 +258,8 @@
     pose.setOptions({
       modelComplexity: 1,
       smoothLandmarks: true,
-      minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.6
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
     });
 
     pose.onResults((results) => {
@@ -256,13 +271,10 @@
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
       if (results.poseLandmarks) {
-        // Gambar kerangka tubuh di canvas
-        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#0284c7', lineWidth: 3});
-        drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#f43f5e', lineWidth: 1, radius: 4});
-
+        drawPoseLandmarks(canvasCtx, results.poseLandmarks);
         analyzePose(results.poseLandmarks);
       } else {
-        resetHold("Tubuh/Tangan Tidak Terdeteksi");
+        resetHold("Tubuh Tidak Terdeteksi di Layar");
       }
     });
 
